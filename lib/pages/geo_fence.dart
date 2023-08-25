@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:geofence/pages/google_map.dart';
 import 'package:geofence/services/authServices/auth_service.dart';
 import 'package:geofence/services/authServices/firebase_auth_services.dart';
@@ -31,16 +32,17 @@ class GeoFence extends StatefulWidget {
 }
 
 class _GeoFenceState extends State<GeoFence> {
-  // StreamSubscription<Position>? _positionStream;
+  StreamSubscription<Position>? _positionStream;
   FirebaseServices firebaseServices = FirebaseServices();
   DatabaseReference userRef = FirebaseDatabase.instance.ref("user");
   late SharedPreferences prefs;
+  late SharedPreferences entry_tap;
   Color colour = Colors.orange.shade100;
-  // LocationSettings _locationSet = LocationSettings(
-  //   accuracy: LocationAccuracy.bestForNavigation,
-  //   distanceFilter: 1,
-  //   timeLimit: Duration(seconds: 10000),
-  // );
+  LocationSettings _locationSet = LocationSettings(
+    accuracy: LocationAccuracy.bestForNavigation,
+    distanceFilter: 1,
+    timeLimit: Duration(seconds: 10000),
+  );
 
   // To stop the attendance
     void startGeofenceService() async {
@@ -50,44 +52,60 @@ class _GeoFenceState extends State<GeoFence> {
     double radiusInMeter = widget.radiusCenter;
     int? eventPeriodInSeconds = 1;
 
-    // if (_positionStream == null) {
-    //   _positionStream = Geolocator.getPositionStream(
-    //     locationSettings: _locationSet,
-    //   ).listen((Position position) {
-    //     double distanceInMeters = Geolocator.distanceBetween(
-    //         latitude, longitude, position.latitude, position.longitude);
-    //     try {
-    //       _checkGeofence(distanceInMeters, radiusInMeter);
-    //     } catch (e) {}
-    //   });
-    // }
-    // _positionStream!
-    //     .pause(Future.delayed(Duration(seconds: eventPeriodInSeconds!)));
+    if (_positionStream == null) {
+      _positionStream = Geolocator.getPositionStream(
+        locationSettings: _locationSet,
+      ).listen((Position position) {
+        print("SOMESHHHHHHH");
+        double distanceInMeters = Geolocator.distanceBetween(
+            latitude, longitude, position.latitude, position.longitude);
+        try {
+          _checkGeofence(distanceInMeters, radiusInMeter);
+        } catch (e) {}
+      });
+    }
+    _positionStream!
+        .pause(Future.delayed(Duration(seconds: eventPeriodInSeconds!)));
 
-    Position currentPosition =  await Geolocator.getCurrentPosition(
-      timeLimit: Duration(seconds: 5),
+    // Position currentPosition =  await Geolocator.getCurrentPosition(
+    //   timeLimit: Duration(seconds: 5),
+    //   desiredAccuracy: LocationAccuracy.bestForNavigation,
+    // );
+    //
+    // if(currentPosition != null){
+    //   double distanceInMeters = Geolocator.distanceBetween(latitude, longitude, currentPosition.latitude, currentPosition.longitude);
+    //   _checkGeofence(distanceInMeters, radiusInMeter);
+    // }
+  }
+
+  void Entry() async{
+    double latitude = widget.latitudeCenter;
+    double longitude = widget.longitudeCenter;
+    double radiusInMeter = widget.radiusCenter;
+
+    Position currPosition =  await Geolocator.getCurrentPosition(
+      timeLimit: Duration(seconds: 1),
       desiredAccuracy: LocationAccuracy.bestForNavigation,
     );
-
-    if(currentPosition != null){
-      double distanceInMeters = Geolocator.distanceBetween(latitude, longitude, currentPosition.latitude, currentPosition.longitude);
-      _checkGeofence(distanceInMeters, radiusInMeter);
-    }
+    double distanceInMeters = Geolocator.distanceBetween(
+        latitude, longitude, currPosition.latitude, currPosition.longitude);
+    entry_tap.setInt('cnt', 1);
+    _checkGeofence(distanceInMeters, radiusInMeter);
   }
 
   void _checkGeofence(double distanceInMeters, double radiusInMeter) async {
     if (distanceInMeters <= radiusInMeter) {
-      print("Enter");
-
-      if (prefs.getInt('count') == 0) {
+      if (prefs.getInt('count') == 0 && entry_tap.getInt('cnt') == 1) {
         // print(prefs.getInt('count'));
-
+        print("Enter");
         prefs.setInt('count', 1);
         firebaseServices.markAttendanceEntry(
           uId: FirebaseAuth.instance.currentUser!.uid,
           officeName: widget.name,
         );
-
+        FlutterBackgroundService().invoke("setAsBackground");
+        service.startService();
+        startGeofenceService();
         showTopSnackBar(
           Overlay.of(context),
           const CustomSnackBar.success(
@@ -99,30 +117,25 @@ class _GeoFenceState extends State<GeoFence> {
         });
       }
       else{
-        showTopSnackBar(
-          Overlay.of(context),
-          const CustomSnackBar.success(
-            message: "Your attendance is already started",
-          ),
-        );
-        setState(() {
-         colour = Colors.orange.shade700;
-        });
+        if(prefs.getInt('count') == 1){
+          setState(() {
+            colour = Colors.orange.shade700;
+          });
+        }
       }
     }
     else{
-      showTopSnackBar(
-        Overlay.of(context),
-        const CustomSnackBar.error(
-          message: "You are outside the area",
-        ),
-      );
+      print("OUTSIDE");
+      endGeoFenceService();
     }
   }
   // To stop the attendance
   void endGeoFenceService(){
     if (prefs.getInt('count') == 1) {
+      FlutterBackgroundService().invoke("setAsForeground");
+      service.invoke("stopService");
       prefs.setInt('count', 0);
+      entry_tap.setInt('cnt', 0);
       firebaseServices.markAttendanceExit(
           uId: FirebaseAuth.instance.currentUser!.uid);
       showTopSnackBar(
@@ -131,17 +144,11 @@ class _GeoFenceState extends State<GeoFence> {
           message: "Your attendance is stopped",
         ),
       );
+      print("OUTSIDE");
+      service.invoke("stopService");
       setState(() {
         colour = Colors.orange.shade100;
       });
-    }
-    else{
-      showTopSnackBar(
-        Overlay.of(context),
-        const CustomSnackBar.error(
-          message: "Your attendance is already stopped",
-        ),
-      );
     }
   }
 
@@ -157,6 +164,7 @@ class _GeoFenceState extends State<GeoFence> {
   void saveSharedPreferences() async {
     prefs = await SharedPreferences.getInstance();
     print(prefs.getInt('count'));
+    entry_tap = await SharedPreferences.getInstance();
   }
   setColor()async {
     prefs = await SharedPreferences.getInstance();
@@ -173,7 +181,9 @@ class _GeoFenceState extends State<GeoFence> {
     super.initState();
     saveSharedPreferences();
     setColor();
+    startGeofenceService();
   }
+  final service = FlutterBackgroundService();
 
   @override
   Widget build(BuildContext context) {
@@ -194,7 +204,7 @@ class _GeoFenceState extends State<GeoFence> {
               children: [
                 ElevatedButton(
                   onPressed: () {
-                    startGeofenceService();
+                    Entry();
                   },
                   child: Container(
                     child: Text(
@@ -240,6 +250,6 @@ class _GeoFenceState extends State<GeoFence> {
   @override
   void dispose() {
     // TODO: implement dispose
-    super.dispose();
+   super.dispose();
   }
 }
